@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+  },
+  "repository": {
+    "type": "git"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/google-apps-script": "0.0.37",
+    "@types/google-maps": "^3.2.0",
+    "google-apps-script": "^2.9.2"
+  },
+  "devDependencies": {
+    "typescript": "^3"
+  }
+}
