@@ -100,7 +100,8 @@ class RealPlayerTab extends PlayerTab {
 
   setMessage(message: string, color?: string) {
     this.messageCell.setValue(message);
-    this.messageCell.setBackground(color);
+    if (color)
+      this.messageCell.setBackground(color);
   }
 
   copyRows(fromRow: number, pasteCount: number) {
@@ -282,7 +283,7 @@ class CardsTab extends Tab {
     const selectedCards = [];
 
     while (selectedCards.length < cardsCount) {
-      const randomRow = this.firstRow + MathUtils.getRandomInt(availableCardsCount);
+      const randomRow = this.firstRow + MathUtils.getRandomInt(availableCardsCount - 1);
       // TODO only works because table starts at first column
       if (!allCardsValues[randomRow][this.availableColumn - 1] as boolean) {
         continue;
@@ -309,6 +310,8 @@ class CardsTab extends Tab {
   }
 }
 
+type ButtonName = 'registerVote' | 'registerCard' | 'takeNewQuestion';
+
 class Bmcc {
   doc: Spreadsheet;
 
@@ -328,7 +331,7 @@ class Bmcc {
     this.playerTemplateTab = new TemplatePlayerTab(this.getTab(TAB_NAMES.PLAYER));
   }
 
-  private static playerTabs: {[name: string]: RealPlayerTab} = {};
+  private static playerTabs: { [name: string]: RealPlayerTab } = {};
 
   getPlayerTab(playerName: string): RealPlayerTab {
     if (Bmcc.playerTabs[playerName] === undefined) {
@@ -357,24 +360,27 @@ class Bmcc {
     const playerNames = this.boardTab.playerNames;
 
     const randomQuestioner = MathUtils.getRandomInt(playerNames.length - 1);
+    const questionerName = playerNames[randomQuestioner];
 
     playerNames.forEach(player => {
-      const tab = new RealPlayerTab(this.copyTab(this.playerTemplateTab.tab.getName(), player), this.initCardCount, this.playerTemplateTab, this.answerersCount);
+      const playerTab = new RealPlayerTab(this.copyTab(this.playerTemplateTab.tab.getName(), player), this.initCardCount, this.playerTemplateTab, this.answerersCount);
 
-      tab.init(this.answerersCount);
+      playerTab.init(this.answerersCount);
 
       // TODO add names for board?
-      this.completeCards(tab, this.initCardCount);
+      this.completeCards(playerTab, this.initCardCount);
 
-      tab.setMessage('');
-      tab.questionCell.setValue('');
+      playerTab.setMessage('');
+      playerTab.questionCell.setValue('');
+
+      if (player !== questionerName) {
+        this.hideButton(playerTab.sheet, 'takeNewQuestion');
+        this.hideButton(playerTab.sheet, 'registerCard');
+        this.hideButton(playerTab.sheet, 'registerVote');
+      }
     });
 
     this.cleanRound();
-
-    Logger.log(`random player: ${randomQuestioner}`);
-
-    const questionerName = playerNames[randomQuestioner];
 
     Ui.alert(`${questionerName} a été tiré au sort pour commencer !`)
 
@@ -397,6 +403,10 @@ class Bmcc {
 
     const question = this.questionTab.getNewCards(1)[0];
 
+    if (!Ui.confirm(`Question proposée :\n"${question}"\n\nTu valides ? Sinon on en prend une autre`)) {
+      return this.takeNewQuestion();
+    }
+
     this.cleanRound();
 
     // Update question everywhere
@@ -405,12 +415,12 @@ class Bmcc {
       playerTab.questionCell.setValue(question);
       if (p === currentUser) {
         playerTab.setMessage('En attente des propositions...');
+        this.hideButton(playerTab.sheet, 'takeNewQuestion');
       } else {
         playerTab.setMessage("C'est le moment de choisir ta meilleure proposition !", '#daedf5');
+        this.showButton(playerTab.sheet, 'registerCard');
       }
     });
-
-    Ui.alert(question);
   }
 
   cleanRound() {
@@ -554,7 +564,7 @@ class Bmcc {
       return;
     }
 
-    if (!Ui.confirm(`"${fullAnswer}"\nTu confirmes ?`)) {
+    if (!Ui.confirm(`"${fullAnswer}"\n\nTu confirmes ?`)) {
       return;
     }
 
@@ -574,6 +584,7 @@ class Bmcc {
   endSelectionPhase() {
     const questionerTab = this.getPlayerTab(this.boardTab.currentQuestioner);
     questionerTab.setMessage("C'est le moment de choisir la meilleure combinaison !", '#c8f7ca');
+    this.showButton(questionerTab.sheet, 'registerVote')
 
     this.boardTab.playerNames
       .filter(name => name !== this.boardTab.currentQuestioner)
@@ -589,6 +600,7 @@ class Bmcc {
 
         // remove card from player's tab
         const playerTab = this.getPlayerTab(name);
+        this.hideButton(playerTab.sheet, 'registerCard');
         const selectedCards = playerTab.getSelectedCardsRanges();
         selectedCards.forEach(range => {
           range.setValues([['', '']]); // TODO because we know there are only 2 columns
@@ -619,12 +631,18 @@ class Bmcc {
       return;
     }
 
+    this.hideButton(questionerTab.sheet, 'registerVote');
+
     const chosenRow = chosen[0];
     const answer = chosenRow[1] as string;
 
-    this.boardTab.playerNames.forEach(name => {
-      const player = this.boardTab.players[name];
-      this.getPlayerTab(name).sheet.setTabColor(null);
+    this.boardTab.playerNames.forEach(playerName => {
+      const player = this.boardTab.players[playerName];
+      const playerTab = this.getPlayerTab(playerName);
+      playerTab.sheet.setTabColor(null);
+
+      this.hideButton(playerTab.sheet, 'registerCard');
+
       for (let i = 0; i < answerValues.length; i++) {
         const row = answerValues[i];
         // TODO hardcoded column
@@ -633,12 +651,12 @@ class Bmcc {
             answers.getRow() + i,
             // TODO hardcoded column
             answers.getColumn()
-          ).setValue(name);
+          ).setValue(playerName);
 
           if (row[2] === 1) {
             // Winner!
             player.scoreCell.setValue(player.scoreCell.getValue() as number + 1);
-            Ui.alert(`And the winner is... ${name}!`);
+            Ui.alert(`And the winner is... ${playerName}!`);
 
             // FIXME handle end of game
 
@@ -646,7 +664,7 @@ class Bmcc {
             const playerTab = this.getPlayerTab(currentQuestioner);
             playerTab.setMessage('');
 
-            this.setQuestioner(name);
+            this.setQuestioner(playerName);
           }
         }
       }
@@ -661,14 +679,57 @@ class Bmcc {
     // change questioner's tab color
     const playerTab = this.getPlayerTab(name);
 
-    const drawings = playerTab.sheet.getDrawings();
-    const drawing = drawings.filter((e) => e.getOnAction() == 'takeNewQuestion')[0];
-    drawing.setWidth(200);
-    drawing.setHeight(10);
+    // Make button visible
+    this.showButton(playerTab.sheet, 'takeNewQuestion');
+    this.hideButton(playerTab.sheet, 'registerCard');
+    this.hideButton(playerTab.sheet, 'registerVote');
 
     playerTab.sheet.setTabColor('red');
     playerTab.setMessage('Choisis une nouvelle question !', '#f5d0d0');
   }
+  
+  private getOriginalSize(methodName: ButtonName): {
+    width: number,
+    height: number
+  } {
+    const button = Bmcc.getButton(this.playerTemplateTab.tab, methodName);
+    return {
+      width: button.getWidth(),
+      height: button.getHeight()
+    }
+  }
+  
+  // Drawing class not found in Spreadsheet TS declaration
+  private static getButton(sheet: GoogleAppsScript.Spreadsheet.Sheet, methodName: string) {
+    // @ts-ignore
+    const drawings = sheet.getDrawings();
+    Logger.log(`Sheet: ${sheet.getName()}`);
+    Logger.log(drawings.length);
+    // Assumes it exists
+    return drawings.filter(e => {
+      Logger.log(`Action: ${e.getOnAction()}`);
+      return e.getOnAction() === methodName;
+    })[0];
+  }
+
+  private static readonly HIDDEN_BUTTON_SIZE = 1;
+
+  private hideButton(sheet: GoogleAppsScript.Spreadsheet.Sheet, methodName: ButtonName) {
+    const button = Bmcc.getButton(sheet, methodName);
+    button.setWidth(Bmcc.HIDDEN_BUTTON_SIZE);
+    button.setHeight(Bmcc.HIDDEN_BUTTON_SIZE);
+  }
+
+  private showButton(sheet: GoogleAppsScript.Spreadsheet.Sheet, methodName: ButtonName) {
+    const button = Bmcc.getButton(sheet, methodName);
+    if (button.getWidth() === Bmcc.HIDDEN_BUTTON_SIZE) {
+      const originalSize = this.getOriginalSize(methodName);
+
+      button.setWidth(originalSize.width);
+      button.setHeight(originalSize.height);
+    }
+  }
+
 }
 
 const bmcc = new Bmcc();
@@ -691,4 +752,8 @@ function registerCard() {
 
 function registerVote() {
   bmcc.registerVote();
+}
+
+function temp() {
+  bmcc.endSelectionPhase();
 }
